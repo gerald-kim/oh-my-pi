@@ -1,5 +1,6 @@
 import * as os from "node:os";
 import * as path from "node:path";
+import { normalizePathForComparison, pathIsWithin } from "@oh-my-pi/pi-utils";
 
 /**
  * Filesystem workspace of a session: one current/default directory plus a
@@ -45,6 +46,25 @@ export function normalizeSessionWorkspace(args: { cwd: string; directories?: str
 		if (!directories.includes(normalized)) directories.push(normalized);
 	}
 	return { cwd, directories };
+}
+
+/**
+ * Resolve a path to the most specific registered workspace directory that
+ * contains it. This keeps nested explicit roots (for example a worktree below a
+ * meta-workspace cwd) authoritative without discovering unregistered roots.
+ */
+export function workspaceDirectoryForPath(workspace: SessionWorkspace, candidate: string): string | null {
+	const resolvedCandidate = normalizeWorkspaceDirectory(candidate, workspace.cwd);
+	let selected: string | null = null;
+	let selectedLength = -1;
+	for (const directory of workspace.directories) {
+		if (!pathIsWithin(directory, resolvedCandidate)) continue;
+		const normalizedLength = normalizePathForComparison(directory).length;
+		if (normalizedLength <= selectedLength) continue;
+		selected = directory;
+		selectedLength = normalizedLength;
+	}
+	return selected;
 }
 
 /** The workspace directories beyond `cwd`, in order (ACP `additionalDirectories` shape). */

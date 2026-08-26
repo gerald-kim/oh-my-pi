@@ -652,6 +652,7 @@ export class WriteTool implements AgentTool<typeof writeSchema, WriteToolDetails
 			? createLspWritethrough(session.cwd, {
 					enableFormat,
 					enableDiagnostics,
+					getAdditionalDirectories: () => session.additionalDirectories ?? [],
 					transformDiagnostics: dedup
 						? (path, result) => getDiagnosticsLedger(session).reduce(path, result)
 						: undefined,

@@ -1,4 +1,6 @@
+import * as path from "node:path";
 import { logger } from "@oh-my-pi/pi-utils";
+import { normalizeSessionWorkspace, workspaceDirectoryForPath } from "../session/session-workspace";
 import { throwIfAborted } from "../tools/tool-errors";
 import {
 	getActiveClients,
@@ -10,10 +12,12 @@ import {
 	sendNotification,
 	sendRequest,
 	shutdownClientInstance,
+	shutdownStaleClients,
 	syncContent,
 	WARMUP_TIMEOUT_MS,
 } from "./client";
-import { getServersForFile, type LspConfig, loadConfig } from "./config";
+import { clearLinterClientCacheForWorkspace } from "./clients";
+import { configCache, getConfig, getServersForFile, type LspConfig, loadConfig } from "./config";
 import { MUX_RESTART_METHOD } from "./mux/protocol";
 import type { LspClient, ServerConfig } from "./types";
 
@@ -187,6 +191,56 @@ export async function notifyFileSaved(
 		}),
 	);
 	throwIfAborted(signal);
+}
+
+export interface LspWorkspaceConfig {
+	root: string;
+	config: LspConfig;
+}
+
+/** Resolve every explicit session workspace root to its independent LSP config. */
+export function getLspWorkspaceConfigs(cwd: string, additionalDirectories?: readonly string[]): LspWorkspaceConfig[] {
+	const workspace = normalizeSessionWorkspace({ cwd, directories: [...(additionalDirectories ?? [])] });
+	return workspace.directories.map(root => ({ root, config: getConfig(root) }));
+}
+
+/** Resolve a file to its most specific explicit workspace root without loading LSP config. */
+export function getLspWorkspaceRootForFile(
+	cwd: string,
+	additionalDirectories: readonly string[] | undefined,
+	filePath: string,
+): string {
+	const workspace = normalizeSessionWorkspace({ cwd, directories: [...(additionalDirectories ?? [])] });
+	return workspaceDirectoryForPath(workspace, filePath) ?? workspace.cwd;
+}
+
+/**
+ * Route a file to the most specific explicit session workspace root.
+ * Unregistered paths retain the historical cwd fallback.
+ */
+export function getLspWorkspaceConfigForFile(
+	cwd: string,
+	additionalDirectories: readonly string[] | undefined,
+	filePath: string,
+): LspWorkspaceConfig {
+	const root = getLspWorkspaceRootForFile(cwd, additionalDirectories, filePath);
+	return { root, config: getConfig(root) };
+}
+
+/** Drop cached config for a workspace so its next request re-detects servers. */
+export function invalidateLspWorkspace(root: string): void {
+	const resolvedRoot = path.resolve(root);
+	for (const cachedRoot of configCache.keys()) {
+		if (path.resolve(cachedRoot) === resolvedRoot) configCache.delete(cachedRoot);
+	}
+}
+
+/** Stop and forget every LSP/linter client owned by a removed workspace root. */
+export async function disposeLspWorkspace(root: string): Promise<string[]> {
+	const resolvedRoot = path.resolve(root);
+	invalidateLspWorkspace(resolvedRoot);
+	clearLinterClientCacheForWorkspace(resolvedRoot);
+	return await shutdownStaleClients(resolvedRoot, []);
 }
 
 function isCustomLinter(serverConfig: ServerConfig): boolean {

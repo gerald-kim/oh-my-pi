@@ -39,6 +39,16 @@ export function getLinterClient(serverName: string, config: ServerConfig, cwd: s
 	return client;
 }
 
+/** Dispose cached custom linter clients owned by one workspace root. */
+export function clearLinterClientCacheForWorkspace(cwd: string): void {
+	const suffix = `:${cwd}`;
+	for (const [key, client] of clientCache) {
+		if (!key.endsWith(suffix)) continue;
+		client.dispose?.();
+		clientCache.delete(key);
+	}
+}
+
 /**
  * Clear all cached linter clients.
  */

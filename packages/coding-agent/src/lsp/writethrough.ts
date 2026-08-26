@@ -15,7 +15,7 @@ import {
 	type ServerVersionMap,
 } from "./diagnostics";
 import { type FileDiagnosticsResult, FileFormatResult } from "@oh-my-pi/pi-tui/tools/lsp";
-import { notifyFileSaved, splitServers, syncFileContent } from "./servers";
+import { getLspWorkspaceRootForFile, notifyFileSaved, splitServers, syncFileContent } from "./servers";
 import type { ServerConfig } from "./types";
 import { summarizeDiagnosticMessages } from "./utils";
 
@@ -31,6 +31,8 @@ export interface WritethroughOptions {
 	deferredSignal?: AbortSignal;
 	/** Transform diagnostics before surfacing them after a successful fetch. */
 	transformDiagnostics?: (absPath: string, result: FileDiagnosticsResult) => FileDiagnosticsResult;
+	/** Live additional workspace roots used to route each written file. */
+	getAdditionalDirectories?: () => readonly string[];
 }
 
 /** Internal resolved form of {@link WritethroughOptions} that the writethrough machinery operates on. */
@@ -38,6 +40,7 @@ type ResolvedWritethroughOptions = {
 	enableFormat: boolean;
 	enableDiagnostics: boolean;
 	transformDiagnostics?: (absPath: string, result: FileDiagnosticsResult) => FileDiagnosticsResult;
+	getAdditionalDirectories?: () => readonly string[];
 };
 
 /** Per-file deferred LSP diagnostics wiring for {@link WritethroughCallback}. */
@@ -309,6 +312,7 @@ async function runLspWritethrough(
 ): Promise<WritethroughResult> {
 	const { enableFormat, enableDiagnostics } = options;
 	const contentAlreadyWritten = runOptions?.contentAlreadyWritten ?? false;
+	const lspCwd = getLspWorkspaceRootForFile(cwd, options.getAdditionalDirectories?.(), dst);
 
 	let finalContent = content;
 	const writeContent = async (value: string) => writeFileWithFallback(dst, value, file);
@@ -320,7 +324,7 @@ async function runLspWritethrough(
 		if (writeNotified) return;
 		writeNotified = true;
 		try {
-			await notifyWorkspaceWatchedFiles(cwd, [{ filePath: dst, type: changeType }], notifySignal);
+			await notifyWorkspaceWatchedFiles(lspCwd, [{ filePath: dst, type: changeType }], notifySignal);
 		} catch (error) {
 			if (notifySignal?.aborted && !signal?.aborted) {
 				// The operation budget died mid-notify while the caller is still
@@ -338,8 +342,7 @@ async function runLspWritethrough(
 		return { finalContent, diagnostics: undefined };
 	}
 
-	const config = getConfig(cwd);
-	const servers = getServersForFile(config, dst);
+	const servers = getServersForFile(getConfig(lspCwd), dst);
 
 	if (servers.length === 0) {
 		await getWritePromise();
@@ -352,7 +355,7 @@ async function runLspWritethrough(
 	// Capture diagnostic versions BEFORE syncing to detect stale diagnostics
 	// Bound client creation by the writethrough budget: a hung/broken server
 	// must not add its full init wait (30s default) to every edit.
-	const minVersionsPromise = enableDiagnostics ? captureDiagnosticVersions(cwd, servers, 5_000, signal) : undefined;
+	const minVersionsPromise = enableDiagnostics ? captureDiagnosticVersions(lspCwd, servers, 5_000, signal) : undefined;
 	let minVersions = useCustomFormatter ? undefined : await minVersionsPromise;
 	let expectedDocumentVersions: ServerVersionMap | undefined;
 
@@ -381,7 +384,7 @@ async function runLspWritethrough(
 				// supports implementations that inspect the file before formatting.
 				if (!contentAlreadyWritten) await writeContent(content);
 				const [formattedContent, capturedVersions] = await Promise.all([
-					formatContent(dst, content, cwd, customLinterServers, operationSignal),
+					formatContent(dst, content, lspCwd, customLinterServers, operationSignal),
 					minVersionsPromise,
 				]);
 				finalContent = formattedContent.content;
@@ -395,14 +398,14 @@ async function runLspWritethrough(
 				}
 				if (!contentAlreadyWritten || finalContent !== content) await writeContent(finalContent);
 				await notifyWriteCommitted(operationSignal);
-				await syncFileContent(dst, finalContent, cwd, lspServers, operationSignal, enableDiagnostics);
+				await syncFileContent(dst, finalContent, lspCwd, lspServers, operationSignal, enableDiagnostics);
 			} else {
 				// 1. Sync original content to LSP servers
-				await syncFileContent(dst, content, cwd, lspServers, operationSignal);
+				await syncFileContent(dst, content, lspCwd, lspServers, operationSignal);
 
 				// 2. Format in-memory via LSP
 				if (enableFormat) {
-					const formatted = await formatContent(dst, content, cwd, lspServers, operationSignal);
+					const formatted = await formatContent(dst, content, lspCwd, lspServers, operationSignal);
 					finalContent = formatted.content;
 					if (formatted.failed) {
 						formatter = FileFormatResult.FAILED;
@@ -415,7 +418,7 @@ async function runLspWritethrough(
 
 				// 3. If formatted, sync formatted content to LSP servers
 				if (finalContent !== content) {
-					await syncFileContent(dst, finalContent, cwd, lspServers, operationSignal);
+					await syncFileContent(dst, finalContent, lspCwd, lspServers, operationSignal);
 				}
 
 				// 4. Write to disk
@@ -424,11 +427,11 @@ async function runLspWritethrough(
 			}
 
 			if (enableDiagnostics) {
-				expectedDocumentVersions = await captureOpenFileVersions(dst, cwd, lspServers, operationSignal);
+				expectedDocumentVersions = await captureOpenFileVersions(dst, lspCwd, lspServers, operationSignal);
 			}
 
 			// 5. Notify saved to LSP servers
-			await notifyFileSaved(dst, cwd, lspServers, operationSignal, !useCustomFormatter || enableDiagnostics);
+			await notifyFileSaved(dst, lspCwd, lspServers, operationSignal, !useCustomFormatter || enableDiagnostics);
 		});
 		synced = true;
 	} catch {
@@ -439,7 +442,7 @@ async function runLspWritethrough(
 			if (deferred && !deferred.signal.aborted && enableDiagnostics) {
 				void scheduleDeferredDiagnosticsFetch({
 					dst,
-					cwd,
+					cwd: lspCwd,
 					servers,
 					minVersions,
 					expectedDocumentVersions,
@@ -460,7 +463,7 @@ async function runLspWritethrough(
 	if (synced && enableDiagnostics) {
 		diagnostics = await fetchDiagnosticsWithDeferral({
 			dst,
-			cwd,
+			cwd: lspCwd,
 			servers,
 			minVersions,
 			expectedDocumentVersions,
@@ -547,6 +550,7 @@ export function createLspWritethrough(cwd: string, options?: WritethroughOptions
 		enableFormat: options?.enableFormat ?? false,
 		enableDiagnostics: options?.enableDiagnostics ?? false,
 		transformDiagnostics: options?.transformDiagnostics,
+		getAdditionalDirectories: options?.getAdditionalDirectories,
 	};
 	return async (
 		dst: string,

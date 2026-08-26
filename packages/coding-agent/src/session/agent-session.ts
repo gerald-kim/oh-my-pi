@@ -159,6 +159,7 @@ import type { HindsightSessionState } from "../hindsight/state";
 import { type LocalProtocolOptions, resolveLocalUrlToPath } from "../internal-urls";
 import type { IrcMessage } from "@oh-my-pi/pi-tui/tools/hub";
 import type { DaemonCompletionNotification } from "../launch/protocol";
+import { disposeLspWorkspace, invalidateLspWorkspace } from "../lsp/servers";
 import { shutdownMnemopiEmbedClient } from "../mnemopi/embed-client";
 import { getMnemopiSessionState, type MnemopiSessionState, setMnemopiSessionState } from "../mnemopi/state";
 import { renderOrchestrateNotice } from "../modes/orchestrate";
@@ -5586,7 +5587,10 @@ export class AgentSession {
 		return this.#tools.refreshBaseSystemPrompt(commitIf);
 	}
 
-	/** Add an explicit workspace root and refresh its context before the next model continuation. */
+	/**
+	 * Add an explicit workspace root, invalidate its lazy LSP discovery, and
+	 * refresh project context before the next model continuation.
+	 */
 	async addWorkspaceDirectory(directory: string): Promise<string | null> {
 		const resolved = normalizeWorkspaceDirectory(directory, this.sessionManager.getCwd());
 		let stat: fs.Stats;
@@ -5599,14 +5603,23 @@ export class AgentSession {
 
 		const added = await this.sessionManager.addWorkspaceDirectory(resolved);
 		if (added === null) return null;
+		invalidateLspWorkspace(added);
 		await this.refreshBaseSystemPrompt();
 		return added;
 	}
 
-	/** Remove an explicit workspace root and refresh the remaining project context. */
+	/** Remove an explicit workspace root, its LSP clients, and its project context. */
 	async removeWorkspaceDirectory(directory: string): Promise<string | null> {
 		const removed = await this.sessionManager.removeWorkspaceDirectory(directory);
 		if (removed === null) return null;
+		try {
+			await disposeLspWorkspace(removed);
+		} catch (error) {
+			logger.warn("Failed to stop LSP clients for removed workspace", {
+				root: removed,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
 		await this.refreshBaseSystemPrompt();
 		return removed;
 	}

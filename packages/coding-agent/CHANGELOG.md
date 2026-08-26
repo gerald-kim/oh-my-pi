@@ -9,6 +9,7 @@
 ### Added
 
 - Added `Target.getTargets` to the browser relay's CDP surface so clients can enumerate eligible pages without attaching to or claiming them.
+- Added an agent-callable `workspace` tool and project-root-aware LSP routing for live `/add-dir` workspaces.
 
 ### Fixed
 
