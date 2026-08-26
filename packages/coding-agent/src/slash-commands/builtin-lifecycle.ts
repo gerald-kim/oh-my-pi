@@ -802,15 +802,9 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 			if (runtime.session.isStreaming) return usage("Cannot add a directory while streaming.", runtime);
 			if (!command.args) return usage(formatWorkspaceDirectories(runtime, "Usage: /add-dir <path>"), runtime);
 			const resolved = resolveToCwd(command.args, runtime.cwd);
-			try {
-				const stat = await fs.stat(resolved);
-				if (!stat.isDirectory()) return usage(`Not a directory: ${resolved}`, runtime);
-			} catch {
-				return usage(`Directory does not exist: ${resolved}`, runtime);
-			}
 			let added: string | null;
 			try {
-				added = await runtime.sessionManager.addWorkspaceDirectory(resolved);
+				added = await runtime.session.addWorkspaceDirectory(resolved);
 			} catch (err) {
 				return usage(errorMessage(err), runtime);
 			}
@@ -818,7 +812,6 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 				await runtime.output(`Already in the workspace: ${resolved}`);
 				return commandConsumed();
 			}
-			await runtime.session.refreshBaseSystemPrompt();
 			await runtime.output(formatWorkspaceDirectories(runtime, `Added ${added}.`));
 			return commandConsumed();
 		},
@@ -839,7 +832,7 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 			}
 			let removed: string | null;
 			try {
-				removed = await runtime.sessionManager.removeWorkspaceDirectory(resolved);
+				removed = await runtime.session.removeWorkspaceDirectory(resolved);
 			} catch (err) {
 				return usage(errorMessage(err), runtime);
 			}
@@ -847,7 +840,6 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 				await runtime.output(`Not a workspace directory: ${resolved}`);
 				return commandConsumed();
 			}
-			await runtime.session.refreshBaseSystemPrompt();
 			await runtime.output(formatWorkspaceDirectories(runtime, `Removed ${removed}.`));
 			return commandConsumed();
 		},

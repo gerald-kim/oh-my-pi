@@ -388,6 +388,7 @@ import { buildSessionMetadata } from "./session-metadata";
 import { SessionProviderBoundary, type SessionProviderBoundaryHost } from "./session-provider-boundary";
 import { SessionStatsTracker, type SessionStatsTrackerHost } from "./session-stats";
 import { SessionTools, type SessionToolsHost } from "./session-tools";
+import { normalizeWorkspaceDirectory } from "./session-workspace";
 import type { ShakeMode, ShakeResult } from "./shake-types";
 import { skillPromptTitleInput } from "@oh-my-pi/pi-tui/chat/skill-title-input";
 import { ToolChoiceQueue } from "./tool-choice-queue";
@@ -5583,6 +5584,31 @@ export class AgentSession {
 	/** Rebuilds the stable base prompt, optionally discarding a stale asynchronous rebuild. */
 	refreshBaseSystemPrompt(commitIf?: () => boolean): Promise<void> {
 		return this.#tools.refreshBaseSystemPrompt(commitIf);
+	}
+
+	/** Add an explicit workspace root and refresh its context before the next model continuation. */
+	async addWorkspaceDirectory(directory: string): Promise<string | null> {
+		const resolved = normalizeWorkspaceDirectory(directory, this.sessionManager.getCwd());
+		let stat: fs.Stats;
+		try {
+			stat = await fs.promises.stat(resolved);
+		} catch {
+			throw new Error(`Directory does not exist: ${resolved}`);
+		}
+		if (!stat.isDirectory()) throw new Error(`Not a directory: ${resolved}`);
+
+		const added = await this.sessionManager.addWorkspaceDirectory(resolved);
+		if (added === null) return null;
+		await this.refreshBaseSystemPrompt();
+		return added;
+	}
+
+	/** Remove an explicit workspace root and refresh the remaining project context. */
+	async removeWorkspaceDirectory(directory: string): Promise<string | null> {
+		const removed = await this.sessionManager.removeWorkspaceDirectory(directory);
+		if (removed === null) return null;
+		await this.refreshBaseSystemPrompt();
+		return removed;
 	}
 
 	/** Replaces connected MCP tools and enables them immediately. */

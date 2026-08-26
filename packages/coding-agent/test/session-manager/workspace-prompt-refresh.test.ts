@@ -12,14 +12,13 @@ import { TempDir } from "@oh-my-pi/pi-utils";
 registerMockApi();
 
 /**
- * Contract: when `/add-dir` (or `addWorkspaceDirectory` + `refreshBaseSystemPrompt`)
- * runs mid-session, the rebuilt system prompt MUST list the newly-added directory
- * in its <workspace-roots> block. The sessionManager state updates immediately
- * (so `/dirs` reflects the add), but the system prompt is only re-read on the next
- * `refreshBaseSystemPrompt`; this test guards that refresh path end-to-end.
+ * Contract: the shared AgentSession workspace mutation path used by `/add-dir`
+ * and the agent workspace tool MUST refresh the system prompt before the next
+ * model call. Session state and the <workspace-roots> block must change
+ * together on both add and remove.
  */
 describe("workspace directories in the system prompt", () => {
-	it("adds a directory to the <workspace-roots> block after addWorkspaceDirectory + refreshBaseSystemPrompt", async () => {
+	it("keeps session state and the workspace prompt synchronized across live add and remove", async () => {
 		const dir = TempDir.createSync("@ws-prompt-add-");
 		const auth = await AuthStorage.create(path.join(dir.path(), "auth.db"));
 		try {
@@ -56,9 +55,8 @@ describe("workspace directories in the system prompt", () => {
 				// Sanity: the seed dir is present in the sessionManager state.
 				expect(sessionManager.getAdditionalDirectories()).toEqual([extraDir]);
 
-				// Add a second directory live (as /add-dir does) and refresh the prompt.
-				await sessionManager.addWorkspaceDirectory(laterDir);
-				await session.refreshBaseSystemPrompt();
+				// The shared mutation path persists state and refreshes the prompt.
+				expect(await session.addWorkspaceDirectory(laterDir)).toBe(laterDir);
 
 				// sessionManager state now has both.
 				expect(sessionManager.getAdditionalDirectories()).toEqual([extraDir, laterDir]);
@@ -74,6 +72,14 @@ describe("workspace directories in the system prompt", () => {
 				expect(systemPrompt).toContain("<workspace-roots>");
 				expect(systemPrompt).toContain(extraDir);
 				expect(systemPrompt).toContain(laterDir);
+
+				expect(await session.removeWorkspaceDirectory(laterDir)).toBe(laterDir);
+				expect(sessionManager.getAdditionalDirectories()).toEqual([extraDir]);
+				await session.prompt("noop after remove");
+				const promptAfterRemove =
+					(mockModel.calls?.at(-1)?.context?.systemPrompt as string[] | undefined)?.join("\n") ?? "";
+				expect(promptAfterRemove).toContain(extraDir);
+				expect(promptAfterRemove).not.toContain(laterDir);
 			} finally {
 				await session.dispose();
 			}

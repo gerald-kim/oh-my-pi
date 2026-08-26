@@ -1833,6 +1833,14 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			get additionalDirectories() {
 				return sessionManager.getAdditionalDirectories();
 			},
+			workspace: {
+				list: () => ({
+					cwd: sessionManager.getCwd(),
+					additionalDirectories: sessionManager.getAdditionalDirectories(),
+				}),
+				add: directory => session.addWorkspaceDirectory(directory),
+				remove: directory => session.removeWorkspaceDirectory(directory),
+			},
 			enableLsp,
 			lspReadOnly,
 			enableIrc: restrictToolNames ? false : options.enableIrc,

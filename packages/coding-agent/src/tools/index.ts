@@ -65,6 +65,7 @@ import { SecurityScanTool } from "./security-scan";
 import { supportsExternalThinking, ThinkTool } from "./think";
 import { type TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
 import { TodoTool } from "./todo";
+import { WorkspaceTool } from "./workspace";
 import { WriteTool } from "./write";
 import { isMountableUnderXdev, type XdevState } from "./xdev";
 import { YieldTool } from "./yield";
@@ -134,6 +135,7 @@ export * from "./todo";
 export * from "./tts";
 export * from "./vibe";
 export type { VibeToolDetails } from "@oh-my-pi/pi-tui/tools/vibe";
+export * from "./workspace";
 export * from "./write";
 export * from "./xdev";
 export * from "./yield";
@@ -179,12 +181,25 @@ export interface DeferredDiagnosticsEntry {
 	isStale(): boolean;
 }
 
+export interface WorkspaceToolState {
+	cwd: string;
+	additionalDirectories: string[];
+}
+
+export interface WorkspaceToolController {
+	list(): WorkspaceToolState;
+	add(directory: string): Promise<string | null>;
+	remove(directory: string): Promise<string | null>;
+}
+
 /** Session context for tool factories */
 export interface ToolSession {
 	/** Current working directory */
 	cwd: string;
 	/** Additional workspace directories beyond cwd (multi-root), forwarded to subagents. */
 	additionalDirectories?: string[];
+	/** Live workspace mutation surface exposed to the top-level workspace tool. */
+	workspace?: WorkspaceToolController;
 	/** Whether UI is available */
 	hasUI: boolean;
 	/** Whether `ask` can reach a human. Defaults to `hasUI`. */
@@ -524,6 +539,7 @@ export const BUILTIN_TOOLS: Record<BuiltinToolName, ToolFactory> = {
 	todo: s => new TodoTool(s),
 	web_search: s => new WebSearchTool(s),
 	write: s => new WriteTool(s),
+	workspace: WorkspaceTool.createIf,
 	memory_edit: MemoryEditTool.createIf,
 	retain: MemoryRetainTool.createIf,
 	recall: MemoryRecallTool.createIf,
