@@ -2654,6 +2654,12 @@ function resolveLegacyPiSpecifier(args: { path: string; importer: string }): Leg
 	if (!remappedSpecifier) {
 		return undefined;
 	}
+	// Canonical imports without a compatibility override need no remapping.
+	// Resolving them through Bun.resolveSync re-enters this hook and produces
+	// recursively prefixed file: paths, breaking lazy require() calls.
+	if (args.path === remappedSpecifier && !legacyPiPackageRootOverrides[remappedSpecifier]) {
+		return undefined;
+	}
 
 	// Primary: resolve the canonical @oh-my-pi/* specifier from the host binary
 	// location. Works in dev mode and in source-link installs.
