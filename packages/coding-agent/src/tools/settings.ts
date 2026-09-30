@@ -7,8 +7,6 @@ import { cfgIdaAvailable } from "../ida/install";
 import { cfgLspEnabled } from "../lsp/settings";
 import { cfgTaskMaxRecursionDepth } from "../task/settings";
 
-// Typed defaults for array/record settings — named constants avoid `as` casts
-// under `as const` while still letting SettingValue infer the correct element type.
 const EMPTY_STRING_ARRAY: string[] = [];
 
 export const cfgToolsArtifactSpillThreshold = register({
@@ -581,6 +579,18 @@ export const cfgComputerEnabled = register({
 		group: "Available Tools",
 		label: "Computer",
 		description: "Enable the scriptable host-desktop eval prelude (screenshots, input, accessibility)",
+	},
+});
+
+export const cfgRatchetEnabled = register({
+	id: "ratchet.enabled",
+	type: "boolean",
+	default: false,
+	ui: {
+		tab: "tools",
+		group: "Available Tools",
+		label: "Ratchet",
+		description: "Enable the ratchet eval/hillclimb prelude; /ratchet turns it on for the current session",
 	},
 });
 
